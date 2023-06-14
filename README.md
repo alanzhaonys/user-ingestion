@@ -4,7 +4,7 @@
 
 ## Intro
 
-[Auth0](https://auth0.com/) is a great identity service provider for quickly bootstraping an enterprise application with user management. Unless you're a big company with capable resources, you don't really want to reinvent a new identify platform.
+[Auth0](https://auth0.com/) is a great identity service provider for quickly bootstrapping an enterprise application with user management. Unless you're a big company with capable resources, you don't really want to reinvent a new identify platform.
 
 In this article, I will show you on a high-level how I handle user ingestions from Auth0 to AWS infrastructure that I can integrate user identity into the backend user workflows.
 
@@ -59,14 +59,14 @@ https://API-DOMAIN.com/ENDPOINT?topic=[TOPIC-ARN]&message=[URL-ENCODED-TOPIC]&su
 To secure the API call, `x-api-key` needs to be passed in the header.
 
 ### SNS Topic
-API Gateway forwards the payload to SNS topic. The SNS Topic makes infracture scaling possible. You can have many services subscribed to the topic creating publish/subscribe or fan-out pattern.
+API Gateway forwards the payload to SNS topic. The SNS Topic makes infrastructure scaling possible. You can have many services subscribed to the topic creating publish/subscribe or fan-out pattern.
 
 Attached to the SNS topic is a dead letter queue to catch any undeliverable message.
 
 ### Worker Queues
 You can have many worker queues as you like. They are subscribed to the SNS topic and configured as event source for the Lambda function to process the messages it receives from SNS.
 
-*You could also directly invoke the Lambda function from SNS topic, however by using the SQS in between, it decouples the producer and consumer hence makes the system fault tolerent. Not only it can catch the invalid messages that Lambda can't process, it can also handle the throttling issue if Lambda ever hits concurrency limit by utiliting the dead letter queue. With redrive policy, failed messages can be looked at and reprocessed.*
+*You could also directly invoke the Lambda function from SNS topic, however by using the SQS in between, it decouples the producer and consumer hence makes the system fault tolerant. Not only it can catch the invalid messages that Lambda can't process, it can also handle the throttling issue if Lambda ever hits concurrency limit by utilizing the dead letter queue. With redrive policy, failed messages can be looked at and reprocessed.*
 
 ### Worker Lambda
 Lambda function receives and processes the message. Simple. All logs are saved to CloudWatch.
@@ -80,7 +80,7 @@ Alarms are setup to notify:
 * If dead letter queue has too many messages
 
 ### Security
-* Auth0 Action allows to save secrects as enviornment variables, plus we use API key for the API Gateway
+* Auth0 Action allows to save secrets as environment variables, plus we use API key for the API Gateway
 * SNS and SQS are encrypted at rest using a customer managed KMS key (AWS managed `alias/aws/sqs` or `alias/aws/sns` keys can be used with this setup. [See limitations here](https://repost.aws/knowledge-center/sns-topic-sqs-queue-sse-cmk-policy).)
 
 ### What's Next
@@ -89,8 +89,8 @@ In my backend API, I can get the `user_id` from [the decoded JWT payload](https:
 ### Demo
 I have a bare minimum demo that can be spun up using CloudFormation. Check out the source code at: [https://github.com/alanzhaonys/user-ingestion](https://github.com/alanzhaonys/user-ingestion)
 * `cd` into `cfn/user-metadata` and update the `deploy.sh`. Run it to deploy the infrastructure
-* Once CloudFormation is complete, grab the **API Gateway URL**, **API Key** and **TOPIC Arn**, update the `test.sh` at the proejct root, run it to ingest a test user record
+* Once CloudFormation is complete, grab the **API Gateway URL**, **API Key** and **TOPIC Arn**, update the `test.sh` at the project root, run it to ingest a test user record
 * Check out the CloudWatch logs
 * Modify Lambda functions to fit your need
 
-The AWS resources in the provided CloudFormation are provisioned at the lowerest possible setting to avoid costs. It's not meant for production.
+The AWS resources in the provided CloudFormation are provisioned at the lowest possible settings to avoid costs. It's not meant for production.
