@@ -84,7 +84,7 @@ Alarms are setup to notify:
 * SNS and SQS are encrypted at rest using a customer managed KMS key (AWS managed `alias/aws/sqs` or `alias/aws/sns` keys can't be used with this setup. [See limitations here](https://repost.aws/knowledge-center/sns-topic-sqs-queue-sse-cmk-policy).)
 
 ### What's Next
-In my backend API, I can get the `user_id` from [the decoded JWT payload](https://www.npmjs.com/package/express-oauth2-jwt-bearer) as `req.auth.payload.sub`. I know the user is legitimate and look up user data belongs to that `user_id`. 
+In my backend API, I can get the `user_id` from [the decoded JWT payload](https://www.npmjs.com/package/express-oauth2-jwt-bearer) as `req.auth.payload.sub`. I know the user is legitimate and I can go ahead to look up user data belongs to that `user_id`. 
 
 ### Demo
 I have a bare minimum demo that can be spun up using CloudFormation. Check out the source code at: [https://github.com/alanzhaonys/user-ingestion](https://github.com/alanzhaonys/user-ingestion)
