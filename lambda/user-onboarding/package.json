@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.350.0",
+    "luxon": "^3.3.0"
+  }
+}

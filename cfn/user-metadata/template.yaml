@@ -1,0 +1,737 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  AppName:
+    Type: String
+    Default: demo-user-ingestion
+
+  UserMetadataTableName:
+    Type: String
+    Default: demo_user_metadata
+
+  UserOnboardingTableName:
+    Type: String
+    Default: demo_user_onboarding
+
+  UserMetadataFunctionName:
+    Type: String
+    Default: demo-user-metadata
+
+  UserOnboardingFunctionName:
+    Type: String
+    Default: demo-user-onboarding
+
+  UserOnboardingStreamFunctionName:
+    Type: String
+    Default: demo-user-onboarding-stream
+
+  FunctionTimeout:
+    Type: String
+    Default: 10
+
+  QueueTimeout:
+    Type: String
+    Default: 60
+
+Resources:
+  UserIngestionCmk:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub ${AppName} Customer Managed Key for SQS
+      KeyPolicy:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AllowRootToManageKmsKey
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action:
+              - kms:*
+            Resource: "*"
+          - Sid: AllowSnsKms
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey*
+            Resource: "*"
+
+  UserIngestionCmkAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/UserIngestionCmk
+      TargetKeyId: !Ref UserIngestionCmk
+
+  UserIngestionSnsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub ${AppName} topic
+      TopicName: !Sub ${AppName}-topic
+      KmsMasterKeyId: alias/UserIngestionCmk
+
+  UserIngestionSnsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AppName}-sns-dead-letter-queue
+      VisibilityTimeout: !Ref QueueTimeout
+      MessageRetentionPeriod: 86400
+      KmsMasterKeyId: alias/UserIngestionCmk
+
+  #
+  # User metadata queues
+  #
+  
+  UserMetadataDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AppName}-user-metadata-dead-letter-queue
+      VisibilityTimeout: !Ref QueueTimeout
+      MessageRetentionPeriod: 86400
+      KmsMasterKeyId: alias/UserIngestionCmk
+
+  UserMetadataQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AppName}-user-metadata-queue
+      VisibilityTimeout: !Ref QueueTimeout
+      MessageRetentionPeriod: 86400
+      KmsMasterKeyId: alias/UserIngestionCmk
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt UserMetadataDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  #
+  # User onbarding queues
+  #
+  
+  UserOnboardingDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AppName}-onboarding-dead-letter-queue
+      VisibilityTimeout: !Ref QueueTimeout
+      MessageRetentionPeriod: 86400
+      KmsMasterKeyId: alias/UserIngestionCmk
+
+  UserOnboardingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AppName}-onboarding-queue
+      VisibilityTimeout: !Ref QueueTimeout
+      MessageRetentionPeriod: 86400
+      KmsMasterKeyId: alias/UserIngestionCmk
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt UserOnboardingDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  #
+  # Subscriptions
+  #
+
+  UserMetadataSnsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref UserIngestionSnsTopic
+      Protocol: sqs
+      Endpoint: !GetAtt UserMetadataQueue.Arn
+      RawMessageDelivery: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt UserIngestionSnsDeadLetterQueue.Arn
+
+  UserOnboardingSnsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref UserIngestionSnsTopic
+      Protocol: sqs
+      Endpoint: !GetAtt UserOnboardingQueue.Arn
+      RawMessageDelivery: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt UserIngestionSnsDeadLetterQueue.Arn
+
+  #
+  # Alarms
+  #
+  
+  UserIngestionSnsDlqApproximateNumberOfMessagesVisible:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: UserIngestionSnsDlqApproximateNumberOfMessagesVisible
+      AlarmDescription: Alarms if the DLQ has too many messages
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt UserIngestionSnsDeadLetterQueue.QueueName
+      DatapointsToAlarm: 2
+      EvaluationPeriods: 3
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Period: 300
+      Statistic: Maximum
+      Threshold: 1
+      TreatMissingData: notBreaching
+
+  UserMetadataQueueAgeOfOldestMessage:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: UserMetadataAgeOfOldestMessage
+      AlarmDescription: Alarms if the SQS queue has messages in it for too long
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt UserMetadataQueue.QueueName
+      DatapointsToAlarm: 2
+      EvaluationPeriods: 3
+      MetricName: ApproximateAgeOfOldestMessage
+      Namespace: AWS/SQS
+      Period: 300
+      Statistic: Maximum
+      Threshold: 30
+      TreatMissingData: notBreaching
+      Unit: Seconds
+
+  UserMetadataDlqApproximateNumberOfMessagesVisible:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: UserMetadataDlqApproximateNumberOfMessagesVisible
+      AlarmDescription: Alarms if the DLQ has too many messages
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt UserMetadataDeadLetterQueue.QueueName
+      DatapointsToAlarm: 2
+      EvaluationPeriods: 3
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Period: 300
+      Statistic: Maximum
+      Threshold: 1
+      TreatMissingData: notBreaching
+
+  UserOnboardingQueueAgeOfOldestMessage:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: UserOnboardingAgeOfOldestMessage
+      AlarmDescription: Alarms if the SQS queue has messages in it for too long
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt UserOnboardingQueue.QueueName
+      DatapointsToAlarm: 2
+      EvaluationPeriods: 3
+      MetricName: ApproximateAgeOfOldestMessage
+      Namespace: AWS/SQS
+      Period: 300
+      Statistic: Maximum
+      Threshold: 30
+      TreatMissingData: notBreaching
+      Unit: Seconds
+
+  UserOnboardingDlqApproximateNumberOfMessagesVisible:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: UserOnboardingDlqApproximateNumberOfMessagesVisible
+      AlarmDescription: Alarms if the DLQ has too many messages
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt UserOnboardingDeadLetterQueue.QueueName
+      DatapointsToAlarm: 2
+      EvaluationPeriods: 3
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Period: 300
+      Statistic: Maximum
+      Threshold: 1
+      TreatMissingData: notBreaching
+
+  #
+  # DynamoDB tables
+  #
+  
+  UserMetadataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref UserMetadataTableName
+      AttributeDefinitions:
+        - AttributeName: username
+          AttributeType: S
+      KeySchema:
+        - AttributeName: username
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  UserOnboardingTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref UserOnboardingTableName
+      AttributeDefinitions:
+        - AttributeName: username
+          AttributeType: S
+      KeySchema:
+        - AttributeName: username
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      StreamSpecification:
+        # NEW_IMAGE | OLD_IMAGE | NEW_AND_OLD_IMAGES | KEYS_ONLY
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  #
+  # APIGateway
+  #
+  ApiGatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AppName}-apigateway-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: kms-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey*
+                Resource: !GetAtt UserIngestionCmk.Arn
+        - PolicyName: sns-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref UserIngestionSnsTopic
+        - PolicyName: log-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                  - logs:GetLogEvents
+                  - logs:FilterLogEvents
+                Resource: "*"
+
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayRole.Arn
+
+  UserMetadataApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Ref AppName
+      EndpointConfiguration:
+        Types:
+        # - REGIONAL
+          - EDGE
+
+  UserMetadataApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UserMetadataApi
+      ParentId: !GetAtt UserMetadataApi.RootResourceId
+      PathPart: store
+
+  UserMetadataApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UserMetadataApi
+      ResourceId: !Ref UserMetadataApiResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.querystring.message: true
+        method.request.querystring.subject: true
+        method.request.querystring.topic: true
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: GET
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:sns:action/Publish
+        Credentials: !GetAtt ApiGatewayRole.Arn
+        RequestParameters:
+          integration.request.querystring.TopicArn: "method.request.querystring.topic"
+          integration.request.querystring.Subject: "method.request.querystring.subject"
+          integration.request.querystring.Message: "method.request.querystring.message"
+        TimeoutInMillis: 1200
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: '{"status":"OK"}'
+      MethodResponses:
+        - StatusCode: 200
+
+  UserMetadataDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: UserMetadataApiMethod
+    Properties:
+      RestApiId: !Ref UserMetadataApi
+
+  UserMetadataApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref UserMetadataApi
+      DeploymentId: !Ref UserMetadataDeployment
+      MethodSettings:
+        - DataTraceEnabled: true
+          HttpMethod: "*"
+          LoggingLevel: ERROR
+          MetricsEnabled: true
+          ResourcePath: "/*"
+      StageName: prod
+
+  UserMetadataApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: !Sub ${AppName}-api-key
+      Description: !Sub ${AppName} API Key
+      Enabled: true
+      StageKeys:
+        - RestApiId: !Ref UserMetadataApi
+          StageName: !Ref UserMetadataApiStage
+
+  UserMetadataApiUsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      UsagePlanName: !Sub ${AppName}-usage-plan
+      ApiStages:
+        - ApiId: !Ref UserMetadataApi
+          Stage: !Ref UserMetadataApiStage
+      Quota:
+        Limit: 10000
+        Period: MONTH
+      Throttle:
+        BurstLimit: 200
+        RateLimit: 100
+
+  UserMetadataApiUsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref UserMetadataApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref UserMetadataApiUsagePlan
+
+  #
+  # Function roles
+  #
+  
+  UserMetadataFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AppName}-user-metadata-function-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Path: /
+      Policies:
+        - PolicyName: xray-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: "*"
+        - PolicyName: dynamodb-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${UserMetadataTableName}
+        - PolicyName: sqs-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:DeleteMessage
+                  - sqs:ReceiveMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt UserMetadataQueue.Arn
+        - PolicyName: kms-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey*
+                Resource: !GetAtt UserIngestionCmk.Arn
+
+  UserOnboardingFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AppName}-user-onboarding-function-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Path: /
+      Policies:
+        - PolicyName: xray-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: "*"
+        - PolicyName: dynamodb-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${UserOnboardingTableName}
+        - PolicyName: sqs-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:DeleteMessage
+                  - sqs:ReceiveMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt UserOnboardingQueue.Arn
+        - PolicyName: kms-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey*
+                Resource: !GetAtt UserIngestionCmk.Arn
+
+  UserOnboardingStreamFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AppName}-user-onboarding-stream-function-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: stream-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:DescribeStream
+                  - dynamodb:ListStreams
+                Resource: !GetAtt UserOnboardingTable.StreamArn 
+
+  #
+  # Lambda functions
+  #
+  
+  UserMetadataFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref UserMetadataFunctionName
+      Role: !GetAtt UserMetadataFunctionRole.Arn
+      Code: ../../lambda/user-metadata
+      Handler: index.handler
+      Runtime: nodejs18.x
+      Timeout: !Ref FunctionTimeout
+      TracingConfig:
+        Mode: Active
+      Architectures:
+        - arm64
+      MemorySize: 128
+      Environment:
+        Variables:
+          APP_NAME: !Ref AppName
+          USER_METADATA_TABLE_NAME: !Ref UserMetadataTableName
+      Tags:
+        - Key: Application
+          Value: !Ref AppName
+
+  UserOnboardingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref UserOnboardingFunctionName
+      Role: !GetAtt UserOnboardingFunctionRole.Arn
+      Code: ../../lambda/user-onboarding
+      Handler: index.handler
+      Runtime: nodejs18.x
+      Timeout: !Ref FunctionTimeout
+      TracingConfig:
+        Mode: Active
+      Architectures:
+        - arm64
+      MemorySize: 128
+      Environment:
+        Variables:
+          APP_NAME: !Ref AppName
+          USER_METADATA_TABLE_NAME: !Ref UserMetadataTableName
+          USER_ONBOARDING_TABLE_NAME: !Ref UserOnboardingTableName
+      Tags:
+        - Key: Application
+          Value: !Ref AppName
+
+  UserOnboardingStreamFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref UserOnboardingStreamFunctionName
+      Role: !GetAtt UserOnboardingStreamFunctionRole.Arn
+      Code: ../../lambda/user-onboarding-stream
+      Handler: index.handler
+      Runtime: nodejs18.x
+      Timeout: !Ref FunctionTimeout
+      TracingConfig:
+        Mode: Active
+      Architectures:
+        - arm64
+      MemorySize: 128
+      Environment:
+        Variables:
+          APP_NAME: !Ref AppName
+      Tags:
+        - Key: Application
+          Value: !Ref AppName
+
+  #
+  # Topic policy
+  #
+  
+  UserIngestionSnsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - Ref: UserIngestionSnsTopic
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AllowAPIGatewayPublish
+            Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref UserIngestionSnsTopic
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UserMetadataApi}/*
+
+  #
+  # Queue policy
+  #
+  
+  UserMetadataQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref UserMetadataQueue
+        - !Ref UserOnboardingQueue
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AllowIncomingMessage
+            Effect: Allow
+            Principal:
+              AWS: !Ref AWS::AccountId
+            Action:
+              - sqs:SendMessage
+              - sqs:ReceiveMessage
+            Resource: !GetAtt UserMetadataQueue.Arn
+          - Sid: AllowQueueReceive
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action:
+              - sqs:SendMessage
+            Resource:
+              - !GetAtt UserMetadataQueue.Arn
+              - !GetAtt UserOnboardingQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref UserIngestionSnsTopic
+
+  #
+  # Function permissions and source mappings
+  #
+  
+  UserMetadataEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref UserMetadataFunction
+      EventSourceArn: !GetAtt UserMetadataQueue.Arn
+
+  UserOnboardingEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref UserOnboardingFunction
+      EventSourceArn: !GetAtt UserOnboardingQueue.Arn
+
+  UserOnboardingStreamEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref UserOnboardingStreamFunction
+      EventSourceArn: !GetAtt UserOnboardingTable.StreamArn 
+      StartingPosition: LATEST
+
+Outputs:
+  UserIngestionSnsTopicArn:
+    Description: The ARN of the user ingestion SNS topic
+    Value: !Ref UserIngestionSnsTopic
+  UserMetadataTableName:
+    Description: The name of the user metadata DynamoDB table
+    Value: !Ref UserMetadataTable
+  UserMetadataFunctionName:
+    Description: The name of the user metadata Lambda function
+    Value: !Ref UserMetadataFunction
+  UserMetadataQueueUrl:
+    Value: !Ref UserMetadataQueue
+    Description: URL of the user metadata queue
+  UserOnboardingTableName:
+    Description: The name of the user onboarding DynamoDB table
+    Value: !Ref UserOnboardingTable
+  UserOnboardingFunctionName:
+    Description: The name of the user onboarding Lambda function
+    Value: !Ref UserOnboardingFunction
+  UserOnboardingQueueUrl:
+    Value: !Ref UserOnboardingQueue
+    Description: URL of the user onboarding queue
+  UserOnboardingStreamFunctionName:
+    Description: The name of the user onboarding stream Lambda function
+    Value: !Ref UserOnboardingStreamFunction
