@@ -81,7 +81,7 @@ Alarms are setup to notify:
 
 ### Security
 * Auth0 Action allows to save secrets as environment variables, plus we use API key for the API Gateway
-* SNS and SQS are encrypted at rest using a customer managed KMS key (AWS managed `alias/aws/sqs` or `alias/aws/sns` keys can be used with this setup. [See limitations here](https://repost.aws/knowledge-center/sns-topic-sqs-queue-sse-cmk-policy).)
+* SNS and SQS are encrypted at rest using a customer managed KMS key (AWS managed `alias/aws/sqs` or `alias/aws/sns` keys can't be used with this setup. [See limitations here](https://repost.aws/knowledge-center/sns-topic-sqs-queue-sse-cmk-policy).)
 
 ### What's Next
 In my backend API, I can get the `user_id` from [the decoded JWT payload](https://www.npmjs.com/package/express-oauth2-jwt-bearer) as `req.auth.payload.sub`. I know the user is legitimate and look up user data belongs to that `user_id`. 
