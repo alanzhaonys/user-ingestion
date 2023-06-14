@@ -69,7 +69,7 @@ You can have many worker queues as you like. They are subscribed to the SNS topi
 *You could also directly invoke the Lambda function from SNS topic, however by using the SQS in between, it decouples the producer and consumer hence makes the system fault tolerant. Not only it can catch the invalid messages that Lambda can't process, it can also handle the throttling issue if Lambda ever hits concurrency limit by utilizing the dead letter queue. With redrive policy, failed messages can be looked at and reprocessed.*
 
 ### Worker Lambda
-Lambda function receives and processes the message. Simple. All logs are saved to CloudWatch.
+Lambda function receives and processes the messages. Simple. All logs are saved to CloudWatch.
 
 ### DynamoDB Stream
 DynamoDB table is configured to invoke a Lambda function whenever a row is created, updated and deleted.
