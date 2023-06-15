@@ -15,7 +15,7 @@ In this article, I will show you on a high-level how I handle user ingestions fr
 ## Breakdowns
 
 ### Auth0 Action
-[Auth0 Action](https://auth0.com/docs/customize/actions) allows you to write a small code snippet to be executed upon user login or registration. It also exposes [some user metadata](https://auth0.com/docs/customize/actions/flows-and-triggers/post-user-registration-flow/event-object) that can be passed to the script and then send externally.
+[Auth0 Action](https://auth0.com/docs/customize/actions) allows you to write a small code snippet to be executed upon user login or registration. It also exposes [some user metadata](https://auth0.com/docs/customize/actions/flows-and-triggers/post-user-registration-flow/event-object) that can be passed to the script and then send externally. Action happens behind the scene and the data exchange is invisible to the public.
 
 Below is the sample code I used for the custom action of [**Post User Registration**](https://auth0.com/docs/customize/actions/flows-and-triggers/post-user-registration-flow).
 
